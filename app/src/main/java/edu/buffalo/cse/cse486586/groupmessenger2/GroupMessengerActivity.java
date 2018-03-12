@@ -14,17 +14,18 @@ import android.view.View;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.UnknownHostException;
-import java.sql.SQLOutput;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -36,11 +37,17 @@ import java.util.TreeMap;
  * @author stevko
  */
 public class GroupMessengerActivity extends Activity {
-    static final List<String> portList = Arrays.asList("11108", "11112", "11116", "11120", "11124");
+    static List<String> portList = new ArrayList<String>();
+
     public static final String TAG = GroupMessengerActivity.class.getSimpleName();
     static final int SERVER_PORT = 10000;
     private static int id = -1;
     private static String myPort;
+    private int maxReplyCount = 5;
+    private ArrayList<Message> messages = new ArrayList<Message>();
+    private Map<Integer, Message> finalMessages = new TreeMap<Integer, Message>();
+    private Map<String, List<Message>> acknowledgements = new HashMap<String, List<Message>>();
+    //Map<String, ObjectOutputStream> writers = new HashMap<String, ObjectOutputStream>();
 
     public static int getId() {
         return ++id;
@@ -54,6 +61,11 @@ public class GroupMessengerActivity extends Activity {
         TelephonyManager tel = (TelephonyManager) this.getSystemService(Context.TELEPHONY_SERVICE);
         String portStr = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
 
+        portList.add("11108");
+        portList.add("11112");
+        portList.add("11116");
+        portList.add("11120");
+        portList.add("11124");
         myPort = String.valueOf((Integer.parseInt(portStr) * 2));
         try {
             ServerSocket serverSocket = new ServerSocket(SERVER_PORT);
@@ -78,148 +90,59 @@ public class GroupMessengerActivity extends Activity {
     }
 
     class ServerTask extends AsyncTask<ServerSocket, String, Void> {
-        private ArrayList<Message> messages = new ArrayList<Message>();
-        private Map<Integer, Message> finalMessages = new TreeMap<Integer, Message>();
-        private Map<String, List<Message>> acks = new HashMap<String, List<Message>>();
+
         @Override
         protected Void doInBackground(ServerSocket... serverSockets) {
             ServerSocket serverSocket = serverSockets[0];
             try {
                 while (true) {
                     Socket socket = serverSocket.accept();
-                    ObjectInputStream objectInputStream = new ObjectInputStream(socket.getInputStream());
-                    Message message = (Message) objectInputStream.readObject();
-                    if (message.getStatus().equals(MessageStatus.NEW)) {
-                        message.setSequenceNumber(messages.size());
-                        acks.put(message.getMessage(),new ArrayList<Message>());
-                        messages.add(message);
-                    }
-                    if (message.getFromPort().equals(myPort)) {
-                        messageFromMe(message);
-                    } else {
-                        messageFromOthers(message);
-                    }
-
-
-                    for (int i = 0; i < messages.size(); i++) {
-                        if (messages.get(i).getReplyCount() == maxReplyCount() && !(messages.get(i).getStatus().equals(MessageStatus.DON))) {
-                            sendFinalSequenceMessage(messages.get(i));
-                        }
-                    }
-
-                    for (Integer i : finalMessages.keySet()) {
-                        if (finalMessages.get(i).getStatus().equals(MessageStatus.DON)) {
-                            System.out.println(finalMessages.get(i).getMessage());
-                            System.out.println(finalMessages.get(i).getStatus());
-                            System.out.println(finalMessages.get(i).getFinalSequenceNumber());
-                            finalMessages.get(i).setStatus(MessageStatus.FIN);
-                            publishProgress(finalMessages.get(i).getMessage());
-                        }
-                    }
-                    objectInputStream.close();
+                    socket.setSoTimeout(1000);
+                    DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
+                    Message message = Message.getMessageObject(dataInputStream.readUTF());
+                    processMessage(socket, message);
+                    if (message.getStatus().equals(MessageStatus.DON))
+                        publishProgress(message.getMessage());
+                    dataInputStream.close();
                     socket.close();
                 }
             } catch (IOException e) {
-                e.printStackTrace();
-            } catch (ClassNotFoundException e) {
-                e.printStackTrace();
+                decrementMaxCount();
+                Log.e(TAG, "Server IO");
             }
             return null;
         }
 
-        private void sendFinalSequenceMessage(Message message) {
-            try {
-                for (String port : GroupMessengerActivity.portList) {
-                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-                            Integer.valueOf(port));
-                    ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
-                    if (finalMessages.containsKey(message.getFinalSequenceNumber())) {
-                        //Random random = new Random();
-                        message.setFinalSequenceNumber(message.getFinalSequenceNumber() + 126);
-                    }
-                    message.setFromPort(myPort);
-                    message.setStatus(MessageStatus.SEQ);
-                    objectOutputStream.writeObject(message);
-                    objectOutputStream.flush();
+        private void processMessage(Socket socket, Message message) {
+            if (message.getStatus().equals(MessageStatus.NEW)) {
+                try {
+                    processNewMessage(socket, message);
+                } catch (IOException e) {
+                    Log.e(TAG, "Process New IOException");
                 }
-
-            } catch (UnknownHostException e) {
-                Log.e(TAG, "ClientTask UnknownHostException");
-            } catch (IOException e) {
-                Log.e(TAG, "ClientTask socket IOException");
             }
-        }
-
-        private void messageFromOthers(Message message) {
             if (message.getStatus().equals(MessageStatus.SEQ)) {
-                for (Message m : messages) {
-                    if (m.getMessage().equals(message.getMessage())) {
-                        m.setStatus(MessageStatus.DON);
-                    }
-                }
-                message.setStatus(MessageStatus.DON);
-                if (!finalMessages.containsKey(message.getFinalSequenceNumber()))
-                    finalMessages.put(message.getFinalSequenceNumber(), message);
-            } else {
-                if (message.getStatus().equals(MessageStatus.NEW)) {
-                    try {
-                        Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-                                Integer.valueOf(message.getSourcePort()));
-                        message.setStatus(MessageStatus.ACK);
-                        message.setFromPort(myPort);
-                        ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
-                        objectOutputStream.writeObject(message);
-                        objectOutputStream.flush();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-                if (message.getStatus().equals(MessageStatus.ACK)) {
-                    acks.get(message.getMessage()).add(message);
-                    if(acks.get(message.getMessage()).size() == maxReplyCount()) {
-                        Message message1 = null;
-                        int index = -1;
-                        for(Message m: messages){
-                            if(m.getMessage().contains(message.getMessage())){
-                                message1 = m;
-                            }
-                            index++;
-                        }
-                        for(Message m: acks.get(message.getMessage())){
-                            if(m.getSequenceNumber()>message1.getFinalSequenceNumber()){
-                                message1.setFinalSequenceNumber(m.getSequenceNumber());
-                            }
-                            message1.setReplyCount(message1.getReplyCount() + 1);
-                            messages.remove(index);
-                            messages.add(index, message1);
-                        }
-                    }
-                }
-
+                processFinalSequence(message);
             }
         }
 
-        private int maxReplyCount() {
-            return 4;
+        private void processFinalSequence(Message message) {
+            message.setStatus(MessageStatus.DON);
+            finalMessages.put(message.getFinalSequenceNumber(), message);
         }
 
-        private void messageFromMe(Message message) {
-            if (message.getStatus().equals(MessageStatus.SEQ)) {
-                for (Message m : messages) {
-                    if (m.getMessage().equals(message.getMessage())) {
-                        m.setStatus(MessageStatus.DON);
-                    }
-                }
-                message.setStatus(MessageStatus.DON);
-                if (!finalMessages.containsKey(message.getFinalSequenceNumber()))
-                    finalMessages.put(message.getFinalSequenceNumber(), message);
-            }
+        private void processNewMessage(Socket socket, Message message) throws IOException {
+            message.setSequenceNumber(messages.size());
+            message.setSequenceOf(myPort);
+            messages.add(message);
+            message.setStatus(MessageStatus.ACK);
+            writeMessage(socket, message);
         }
 
         @Override
         protected void onProgressUpdate(String... strings) {
-
-            String strReceived = strings[0].trim();
+            String strReceived = strings[0];
+            System.out.println(id + strReceived);
             TextView remoteTextView = (TextView) findViewById(R.id.textView1);
             remoteTextView.append(strReceived + "\n");
             ContentValues contentValues = new ContentValues();
@@ -235,6 +158,130 @@ public class GroupMessengerActivity extends Activity {
             uriBuilder.scheme(scheme);
             return uriBuilder.build();
         }
+    }
+
+    class ClientTask extends AsyncTask<String, Void, Void> {
+        @Override
+        protected Void doInBackground(String... strings) {
+
+            Iterator<String> ports = portList.iterator();
+            while (ports.hasNext()) {
+                String port = ports.next();
+                try {
+
+                    Socket socket = writeMessage2(port, buildNewMessage(strings));
+                    Message message = readMessage(socket);
+                    if (message.getStatus().equals(MessageStatus.ACK)) {
+                        processAcknowledgementMessage(message);
+                    }
+                } catch (UnknownHostException e) {
+                    decrementMaxCount();
+                    portList.remove(port);
+                    Log.e(TAG, "ClientTask UnknownHostException");
+                } catch (IOException e) {
+                    decrementMaxCount();
+                    portList.remove(port);
+                    Log.e(TAG, "ClientTask socket IOException");
+                }
+            }
+
+
+            return null;
+        }
+
+    }
+
+    void decrementMaxCount() {
+        if (maxReplyCount == 5) {
+            maxReplyCount = 4;
+        }
+    }
+
+    private int maxReplyCount() {
+        return maxReplyCount;
+    }
+
+    private void processAcknowledgementMessage(Message message) {
+        if (acknowledgements.containsKey(message.getMessage())) {
+            acknowledgements.get(message.getMessage()).add(message);
+            if (acknowledgements.get(message.getMessage()).size() == maxReplyCount()) {
+                Message mFinal = getMessage(message.getMessage());
+                for (Message m : acknowledgements.get(message.getMessage())) {
+                    if (m.getSequenceNumber() > mFinal.getFinalSequenceNumber()) {
+                        mFinal.setFinalSequenceNumber(m.getSequenceNumber());
+                    }
+                }
+                if (finalMessages.containsKey(mFinal.getFinalSequenceNumber())) {
+                    for (Message msg : acknowledgements.get(message.getMessage())) {
+                        //System.out.println("Clashed ------->" + msg.toString2());
+                        Random random = new Random();
+                        if (msg.getSequenceOf().equals(portList.get(random.nextInt(portList.size() - 1)))) {
+                            mFinal.setFinalSequenceNumber(msg.getSequenceNumber() + 111);
+                        }
+                    }
+                }
+                sendFinalSequenceMessage(mFinal);
+            }
+        } else {
+            ArrayList<Message> messages = new ArrayList<Message>();
+            messages.add(message);
+            acknowledgements.put(message.getMessage(), messages);
+        }
+    }
+
+    private Message getMessage(String message) {
+        for (Message m : messages) {
+            if (m.getMessage().contains(message)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    private void sendFinalSequenceMessage(Message message) {
+        try {
+            Iterator<String> ports = portList.iterator();
+            while (ports.hasNext()) {
+                message.setStatus(MessageStatus.SEQ);
+                writeMessage2(ports.next(), message);
+            }
+        } catch (UnknownHostException e) {
+            decrementMaxCount();
+            Log.e(TAG, "FinalSequence UnknownHostException");
+        } catch (IOException e) {
+            decrementMaxCount();
+            Log.e(TAG, "FinalSequence IOException");
+        }
+    }
+
+    void writeMessage(Socket socket, Message message) throws IOException {
+        DataOutputStream dataOutputStream = new DataOutputStream(socket.getOutputStream());
+        dataOutputStream.writeUTF(message.toString());
+        dataOutputStream.flush();
+    }
+
+    Socket writeMessage2(String port, Message message) throws IOException {
+        Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                Integer.valueOf(port));
+        socket.setSoTimeout(1000);
+        DataOutputStream dataOutputStream = new DataOutputStream(socket.getOutputStream());
+        dataOutputStream.writeUTF(message.toString());
+        dataOutputStream.flush();
+        return socket;
+    }
+
+    Message readMessage(Socket socket) throws IOException {
+        DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
+        Message message = Message.getMessageObject(dataInputStream.readUTF());
+        return message;
+    }
+
+    Message buildNewMessage(String[] strings) {
+        Message message = new Message();
+        message.setStatus(MessageStatus.NEW);
+        message.setSourcePort(strings[1]);
+        message.setMessage(strings[0]);
+        return message;
     }
 
     @Override

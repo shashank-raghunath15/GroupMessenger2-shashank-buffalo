@@ -1,19 +1,16 @@
 package edu.buffalo.cse.cse486586.groupmessenger2;
 
-import java.io.Serializable;
-
 /**
  * Created by shash on 3/11/2018.
  */
 
-public class Message implements Serializable {
-    private String sourcePort;
-    private String Message;
-    private int sequenceNumber = -1;
-    private int finalSequenceNumber = -1;
-    private int replyCount;
-    private String fromPort;
-    private Enum<MessageStatus> status;
+public class Message {
+    private String sourcePort = "";
+    private String sequenceOf = "";
+    private String Message = "";
+    private int sequenceNumber;
+    private int finalSequenceNumber;
+    private Enum<MessageStatus> status = MessageStatus.NEW;
 
     public Message() {
     }
@@ -50,22 +47,6 @@ public class Message implements Serializable {
         this.finalSequenceNumber = finalSequenceNumber;
     }
 
-    public int getReplyCount() {
-        return replyCount;
-    }
-
-    public void setReplyCount(int replyCount) {
-        this.replyCount = replyCount;
-    }
-
-    public String getFromPort() {
-        return fromPort;
-    }
-
-    public void setFromPort(String fromPort) {
-        this.fromPort = fromPort;
-    }
-
     public Enum<MessageStatus> getStatus() {
         return status;
     }
@@ -74,16 +55,40 @@ public class Message implements Serializable {
         this.status = status;
     }
 
+    public String getSequenceOf() {
+        return sequenceOf;
+    }
+
+    public void setSequenceOf(String sequenceOf) {
+        this.sequenceOf = sequenceOf;
+    }
+
     @Override
     public String toString() {
+        return Message + "@" + status + "@" + sourcePort + "@" + sequenceOf + "@" + finalSequenceNumber + "@" + sequenceNumber;
+    }
+
+    public static Message getMessageObject(String msg) {
+        edu.buffalo.cse.cse486586.groupmessenger2.Message message = new Message();
+        String[] input = msg.split("@");
+        message.setMessage(input[0]);
+        message.setSourcePort(input[2]);
+        message.setSequenceOf(input[3]);
+        message.setFinalSequenceNumber(Integer.valueOf(input[4]));
+        message.setSequenceNumber(Integer.valueOf(input[5]));
+        message.setStatus(MessageStatus.valueOf(input[1]));
+
+        return message;
+    }
+
+    public String toString2() {
         return "Message{" +
                 "sourcePort='" + sourcePort + '\'' +
+                ", sequenceOf='" + sequenceOf + '\'' +
                 ", Message='" + Message + '\'' +
                 ", sequenceNumber=" + sequenceNumber +
                 ", finalSequenceNumber=" + finalSequenceNumber +
-                ", replyCount=" + replyCount +
-                ", fromPort='" + fromPort + '\'' +
-                ", status='" + status + '\'' +
+                ", status=" + status +
                 '}';
     }
 }
