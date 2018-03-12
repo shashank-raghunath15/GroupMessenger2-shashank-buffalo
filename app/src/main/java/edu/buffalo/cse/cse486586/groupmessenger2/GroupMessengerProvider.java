@@ -26,6 +26,8 @@ import android.util.Log;
  */
 public class GroupMessengerProvider extends ContentProvider {
 
+    private Database database;
+
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
         // You do not need to implement this.
@@ -44,19 +46,22 @@ public class GroupMessengerProvider extends ContentProvider {
          * TODO: You need to implement this method. Note that values will have two columns (a key
          * column and a value column) and one row that contains the actual (key, value) pair to be
          * inserted.
-         * 
+         *
          * For actual storage, you can use any option. If you know how to use SQL, then you can use
          * SQLite. But this is not a requirement. You can use other storage options, such as the
          * internal storage option that we used in PA1. If you want to use that option, please
          * take a look at the code for PA1.
          */
-        Log.v("insert", values.toString());
+        database.delete(values);
+        database.insert(values);
+        //Log.v("insert", values.toString());
         return uri;
     }
 
     @Override
     public boolean onCreate() {
-        // If you need to perform any one-time initialization task, please do it here.
+        // If you need to perform any one-time initialization task, please do it here
+        database = new Database(getContext());
         return false;
     }
 
@@ -80,7 +85,6 @@ public class GroupMessengerProvider extends ContentProvider {
          * recommend building a MatrixCursor described at:
          * http://developer.android.com/reference/android/database/MatrixCursor.html
          */
-        Log.v("query", selection);
-        return null;
+        return database.query(selection);
     }
 }
