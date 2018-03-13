@@ -8,6 +8,5 @@ public enum MessageStatus {
     NEW,
     ACK,
     SEQ,
-    DON,
-    FIN
+    DON, FIN,
 }

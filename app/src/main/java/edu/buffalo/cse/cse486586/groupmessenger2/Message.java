@@ -80,15 +80,4 @@ public class Message {
 
         return message;
     }
-
-    public String toString2() {
-        return "Message{" +
-                "sourcePort='" + sourcePort + '\'' +
-                ", sequenceOf='" + sequenceOf + '\'' +
-                ", Message='" + Message + '\'' +
-                ", sequenceNumber=" + sequenceNumber +
-                ", finalSequenceNumber=" + finalSequenceNumber +
-                ", status=" + status +
-                '}';
-    }
 }

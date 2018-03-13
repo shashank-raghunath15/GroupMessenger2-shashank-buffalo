@@ -24,11 +24,13 @@ import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.SortedMap;
 import java.util.TreeMap;
 
 /**
@@ -38,7 +40,6 @@ import java.util.TreeMap;
  */
 public class GroupMessengerActivity extends Activity {
     static List<String> portList = new ArrayList<String>();
-
     public static final String TAG = GroupMessengerActivity.class.getSimpleName();
     static final int SERVER_PORT = 10000;
     private static int id = -1;
@@ -47,7 +48,6 @@ public class GroupMessengerActivity extends Activity {
     private ArrayList<Message> messages = new ArrayList<Message>();
     private Map<Integer, Message> finalMessages = new TreeMap<Integer, Message>();
     private Map<String, List<Message>> acknowledgements = new HashMap<String, List<Message>>();
-    //Map<String, ObjectOutputStream> writers = new HashMap<String, ObjectOutputStream>();
 
     public static int getId() {
         return ++id;
@@ -97,14 +97,13 @@ public class GroupMessengerActivity extends Activity {
             try {
                 while (true) {
                     Socket socket = serverSocket.accept();
-                    socket.setSoTimeout(1000);
-                    DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
-                    Message message = Message.getMessageObject(dataInputStream.readUTF());
-                    processMessage(socket, message);
+                    Message message = readMessage(socket);
+                    if (message.getStatus().equals(MessageStatus.NEW))
+                        processNewMessage(socket, message);
+                    if (message.getStatus().equals(MessageStatus.SEQ))
+                        processFinalSequence(socket, message);
                     if (message.getStatus().equals(MessageStatus.DON))
                         publishProgress(message.getMessage());
-                    dataInputStream.close();
-                    socket.close();
                 }
             } catch (IOException e) {
                 decrementMaxCount();
@@ -113,20 +112,8 @@ public class GroupMessengerActivity extends Activity {
             return null;
         }
 
-        private void processMessage(Socket socket, Message message) {
-            if (message.getStatus().equals(MessageStatus.NEW)) {
-                try {
-                    processNewMessage(socket, message);
-                } catch (IOException e) {
-                    Log.e(TAG, "Process New IOException");
-                }
-            }
-            if (message.getStatus().equals(MessageStatus.SEQ)) {
-                processFinalSequence(message);
-            }
-        }
-
-        private void processFinalSequence(Message message) {
+        private void processFinalSequence(Socket socket, Message message) throws IOException {
+            socket.close();
             message.setStatus(MessageStatus.DON);
             finalMessages.put(message.getFinalSequenceNumber(), message);
         }
@@ -142,7 +129,6 @@ public class GroupMessengerActivity extends Activity {
         @Override
         protected void onProgressUpdate(String... strings) {
             String strReceived = strings[0];
-            System.out.println(id + strReceived);
             TextView remoteTextView = (TextView) findViewById(R.id.textView1);
             remoteTextView.append(strReceived + "\n");
             ContentValues contentValues = new ContentValues();
@@ -168,23 +154,20 @@ public class GroupMessengerActivity extends Activity {
             while (ports.hasNext()) {
                 String port = ports.next();
                 try {
-
-                    Socket socket = writeMessage2(port, buildNewMessage(strings));
-                    Message message = readMessage(socket);
+                    Socket socket = writeMessage(port, buildNewMessage(strings));
+                    Message message = readMessageClose(socket);
                     if (message.getStatus().equals(MessageStatus.ACK)) {
                         processAcknowledgementMessage(message);
                     }
+
                 } catch (UnknownHostException e) {
                     decrementMaxCount();
-                    portList.remove(port);
                     Log.e(TAG, "ClientTask UnknownHostException");
                 } catch (IOException e) {
                     decrementMaxCount();
-                    portList.remove(port);
                     Log.e(TAG, "ClientTask socket IOException");
                 }
             }
-
 
             return null;
         }
@@ -213,10 +196,9 @@ public class GroupMessengerActivity extends Activity {
                 }
                 if (finalMessages.containsKey(mFinal.getFinalSequenceNumber())) {
                     for (Message msg : acknowledgements.get(message.getMessage())) {
-                        //System.out.println("Clashed ------->" + msg.toString2());
                         Random random = new Random();
                         if (msg.getSequenceOf().equals(portList.get(random.nextInt(portList.size() - 1)))) {
-                            mFinal.setFinalSequenceNumber(msg.getSequenceNumber() + 111);
+                            mFinal.setFinalSequenceNumber(msg.getSequenceNumber());
                         }
                     }
                 }
@@ -243,7 +225,7 @@ public class GroupMessengerActivity extends Activity {
             Iterator<String> ports = portList.iterator();
             while (ports.hasNext()) {
                 message.setStatus(MessageStatus.SEQ);
-                writeMessage2(ports.next(), message);
+                writeMessage(ports.next(), message);
             }
         } catch (UnknownHostException e) {
             decrementMaxCount();
@@ -254,13 +236,14 @@ public class GroupMessengerActivity extends Activity {
         }
     }
 
-    void writeMessage(Socket socket, Message message) throws IOException {
+    Socket writeMessage(Socket socket, Message message) throws IOException {
         DataOutputStream dataOutputStream = new DataOutputStream(socket.getOutputStream());
         dataOutputStream.writeUTF(message.toString());
         dataOutputStream.flush();
+        return socket;
     }
 
-    Socket writeMessage2(String port, Message message) throws IOException {
+    Socket writeMessage(String port, Message message) throws IOException {
         Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                 Integer.valueOf(port));
         socket.setSoTimeout(1000);
@@ -273,6 +256,14 @@ public class GroupMessengerActivity extends Activity {
     Message readMessage(Socket socket) throws IOException {
         DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
         Message message = Message.getMessageObject(dataInputStream.readUTF());
+        return message;
+    }
+
+    Message readMessageClose(Socket socket) throws IOException {
+        DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
+        Message message = Message.getMessageObject(dataInputStream.readUTF());
+        dataInputStream.close();
+        socket.close();
         return message;
     }
 
